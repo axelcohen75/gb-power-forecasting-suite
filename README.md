@@ -2,8 +2,6 @@
 
 Forecasting the **Intra-Day (ID)** electricity price in the Great Britain power market from publicly available market data, using the **Day-Ahead (DA)** price and supply/demand forecasts.
 
-> Technical exercise — ENGIE interview.
-
 ---
 
 ## Objective
