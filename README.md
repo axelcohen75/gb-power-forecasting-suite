@@ -2,7 +2,6 @@
 
 Forecasting the **Intra-Day (ID)** electricity price in the Great Britain power market from publicly available market data, using the **Day-Ahead (DA)** price and supply/demand forecasts.
 
----
 
 ## Objective
 
@@ -13,7 +12,6 @@ In the GB power market, each hour has two key prices:
 
 The goal is to **forecast the Intra-Day price**, treating the Day-Ahead price as a known input and learning the *correction* the market applies closer to delivery.
 
----
 
 ## Data
 
@@ -30,7 +28,6 @@ All data is hourly and spans **2020–2024** (GB grid, 17 transmission zones).
 
 *Source: [Elexon BMRS](https://bmrs.elexon.co.uk/).*
 
----
 
 ## Approach
 
@@ -46,7 +43,6 @@ All data is hourly and spans **2020–2024** (GB grid, 17 transmission zones).
    - a **linear regression**
 5. **Validation** — chronological split: train on 2020–2023, test on 2024.
 
----
 
 ## Results
 
@@ -72,16 +68,15 @@ The regularised **XGBoost v2** is the best model — lowest RMSE and highest R²
 - Test **deep-learning models (LSTM)**, which tend to lead on intra-day forecasting.
 - Move from a point forecast to a **prediction interval** for trading use.
 
----
 
 ## Repository
 
-```
+
 .
 ├── Engie-Exercise-final.ipynb   # Full analysis notebook
 ├── dataset/                     # Input CSV files
 └── README.md
-```
+
 
 ### Run
 
@@ -90,6 +85,5 @@ pip install pandas numpy matplotlib seaborn xgboost scikit-learn
 jupyter notebook Engie-Exercise-final.ipynb
 ```
 
----
 
 > *AI was used to generate the plots and polish the markdown. The analysis, modelling and interpretation are my own.*
