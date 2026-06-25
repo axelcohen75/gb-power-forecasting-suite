@@ -1,25 +1,32 @@
-# Forecasting Intra-Day Prices in the GB Power Market
+# GB Power: Intra-Day Price Forecasting & Battery Dispatch
 
-Forecasting the **Intra-Day (ID)** electricity price in the Great Britain power market from publicly available market data, using the **Day-Ahead (DA)** price and supply/demand forecasts.
+An end-to-end project on the Great Britain power market, in two parts:
 
-> Technical exercise — ENGIE interview.
+1. **Forecasting** the Intra-Day (ID) electricity price from public market data.
+2. **Optimising** a battery's charge/discharge schedule using those forecasts to maximise revenue.
+
+The two parts form a realistic pipeline — the forecast is not the end goal in itself, it's the **input to a decision**:
+
+```
+XGBoost forecast  →  forecasted ID prices  →  PuLP optimiser  →  battery dispatch strategy
+```
 
 ---
 
+# Part 1 — Intra-Day Price Forecasting
+
 ## Objective
 
-In the GB power market, each hour has two key prices:
+Each hour of the GB power market has two key prices:
 
 - **Day-Ahead (DA)** — published the day before delivery (known in advance)
 - **Intra-Day (ID)** — updated ~2 hours before delivery, as the supply/demand balance changes
 
 The goal is to **forecast the Intra-Day price**, treating the Day-Ahead price as a known input and learning the *correction* the market applies closer to delivery.
 
----
-
 ## Data
 
-All data is hourly and spans **2020–2024** (GB grid, 17 transmission zones).
+Hourly data spanning **2020–2024** (GB grid, 17 transmission zones).
 
 | File | Content |
 |------|---------|
@@ -28,27 +35,15 @@ All data is hourly and spans **2020–2024** (GB grid, 17 transmission zones).
 | `MELNGC_DA / ID.csv` | Indicative margin (available generation − demand), per zone |
 | `TSDF_DA / ID.csv` | Transmission system demand forecast, per zone |
 
-`_DA` = forecast made the day before · `_ID` = forecast updated intra-day.
-
-*Source: [Elexon BMRS](https://bmrs.elexon.co.uk/).*
-
----
+`_DA` = forecast made the day before · `_ID` = forecast updated intra-day. *Source: [Elexon BMRS](https://bmrs.elexon.co.uk/).*
 
 ## Approach
 
-1. **Data preparation** — aligned the half-hourly prices to the hourly features, merged all sources, handled missing values (forward-fill).
-2. **EDA** — studied the **spread** (`price_ID − price_DA`): its distribution, daily and seasonal patterns, the link with margin, and the two market regimes (calm years vs the 2021–22 energy crisis).
-3. **Feature engineering (13 features)**:
-   - `price_DA` — the anchor
-   - **Deltas** (`ID − DA`) for generation, margin and demand — the intra-day *surprise*
-   - Raw intra-day indicators (national totals)
-   - Calendar features (hour, month, season, weekend, peak-hour)
-4. **Modelling** — **XGBoost**, chosen for its ability to capture the non-linear, outlier-heavy relationships seen in the EDA, benchmarked against:
-   - a **naive** baseline (`ID = DA`)
-   - a **linear regression**
+1. **Data preparation** — aligned the half-hourly prices to the hourly features, merged all sources, forward-filled missing values.
+2. **EDA** — studied the **spread** (`price_ID − price_DA`): distribution, daily/seasonal patterns, link with margin, and the two market regimes (calm years vs the 2021–22 energy crisis).
+3. **Feature engineering (13 features)** — `price_DA` (the anchor), **deltas** (`ID − DA`) for generation/margin/demand (the intra-day *surprise*), raw intra-day indicators, and calendar features.
+4. **Modelling** — **XGBoost**, chosen for the non-linear, outlier-heavy relationships seen in the EDA, benchmarked against a **naive** baseline (`ID = DA`) and a **linear regression**.
 5. **Validation** — chronological split: train on 2020–2023, test on 2024.
-
----
 
 ## Results
 
@@ -59,20 +54,36 @@ All data is hourly and spans **2020–2024** (GB grid, 17 transmission zones).
 | XGBoost v1 (untuned) | 11.09 | 17.12 | 0.697 |
 | **XGBoost v2 (regularised)** | **10.33** | **15.90** | **0.739** |
 
-The regularised **XGBoost v2** is the best model — lowest RMSE and highest R², just above the naive baseline. Feature importance confirms the economic intuition: the model **anchors on the day-ahead price** and **corrects it with the supply/demand surprise**.
+The regularised **XGBoost v2** is the best model. Feature importance confirms the economic intuition: the model **anchors on the day-ahead price** and **corrects it with the supply/demand surprise**. The model captures the direction of moves well but smooths the extreme spikes, which are often driven by events outside the dataset (plant outages, balancing actions).
 
-### Key findings
+---
 
-- The DA price explains ~90% of the ID price — the model's value lies in the **volatile periods**.
-- The model captures the **direction** of moves well but **smooths the extreme spikes**, which are often driven by events outside the dataset (plant outages, balancing actions).
-- 2024 was a calm year, which limits the gain over the naive baseline.
+# Part 2 — Battery (BESS) Dispatch Optimisation
 
-### Limitations & next steps
+## Objective
 
-- Predict the **spread directly** (`ID − DA`) instead of the price.
-- Add richer data (wind/solar forecasts, fuel mix, gas prices).
-- Test **deep-learning models (LSTM)**, which tend to lead on intra-day forecasting.
-- Move from a point forecast to a **prediction interval** for trading use.
+A **Battery Energy Storage System (BESS)** makes money through **time arbitrage**: charge (buy) when electricity is cheap, discharge (sell) when it's expensive. Using the forecasted ID prices as input, we find the optimal hourly charge/discharge schedule that **maximises daily revenue** under the battery's physical constraints.
+
+Specs are inspired by **Engie's Cathkin BESS** (East Kilbride, Scotland), a 2-hour lithium iron phosphate site; the optimiser is spec-agnostic and works for any capacity/power.
+
+## Method
+
+The problem is framed as a **linear program** and solved with **PuLP**:
+
+- **Decision variables** — `charge`, `discharge`, and `soc` (state of charge) for each hour
+- **Objective** — maximise `Σ price[t] × (discharge[t] − charge[t])`
+- **Constraints**:
+  - SOC evolution with round-trip efficiency applied on charge
+  - Capacity and power limits
+  - Battery ends the day at its starting SOC (fair, repeatable cycle)
+
+The optimised strategy is benchmarked against a **naive rule** (charge during the cheapest hours, discharge during the most expensive) to quantify the value the optimisation adds.
+
+## Output
+
+- Total daily revenue (£) and number of arbitrage cycles
+- Hour-by-hour schedule (price vs charge/discharge vs SOC)
+- On a volatile example day, the optimiser runs two arbitrage cycles — buying at the overnight low and selling into the evening peak — while respecting all physical limits.
 
 ---
 
@@ -80,17 +91,21 @@ The regularised **XGBoost v2** is the best model — lowest RMSE and highest R²
 
 ```
 .
-├── Engie-Exercise-final.ipynb   # Full analysis notebook
-├── dataset/                     # Input CSV files
+├── Forecast-GB-Power-ID.ipynb         # Part 1 — forecasting notebook
+├── BESS-Dispatch-Optimisation.ipynb   # Part 2 — battery dispatch notebook
+├── BESS Dispatch Dashboard/           # Interactive dashboard
+├── dataset/                           # Input CSV files + forecast_ID_2024.csv (output of Part 1, input of Part 2)
 └── README.md
 ```
 
 ### Run
 
 ```bash
-pip install pandas numpy matplotlib seaborn xgboost scikit-learn
-jupyter notebook Engie-Exercise-final.ipynb
+pip install pandas numpy matplotlib seaborn xgboost scikit-learn pulp
+jupyter notebook
 ```
+
+Run `Forecast-GB-Power-ID.ipynb` first (it produces `forecast_ID_2024.csv`), then `BESS-Dispatch-Optimisation.ipynb`.
 
 ---
 
