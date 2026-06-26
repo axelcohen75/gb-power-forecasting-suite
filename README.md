@@ -2,6 +2,8 @@
 
 > Forecasting GB intra-day electricity prices, with practical use cases built on top — starting with battery dispatch optimisation and an interactive dashboard.
 
+**🔗 Live demo:** [Battery dispatch dashboard on Hugging Face](https://huggingface.co/spaces/axelcohen75/bess-dashboard)
+
 The **core** of this project is a model that forecasts the Great Britain intra-day electricity price. On top of that forecast, the repo hosts **use cases** that turn the prediction into a concrete decision — the first being a **battery dispatch optimiser** with an interactive dashboard. The structure is designed to grow with new use cases over time.
 
 ```
@@ -80,6 +82,10 @@ The optimised strategy is benchmarked against a **naive rule** (charge during th
 ## Interactive dashboard
 
 An interactive **Dash** app lets you explore the optimiser live: pick any 2024 day, tune the battery parameters (capacity, power, efficiency, initial SOC) or use presets, and watch the dispatch schedule, state of charge, and KPIs (revenue, average buy/sell price, cycles) update in real time.
+
+**▶️ Try it live:** [axelcohen75/bess-dashboard on Hugging Face](https://huggingface.co/spaces/axelcohen75/bess-dashboard)
+
+Or run it locally:
 
 ```bash
 cd bess-dashboard
