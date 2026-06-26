@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BESS Dispatch Optimiser — GB Intra-Day</title>
+  <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/glpk.js@4.0.1/dist/glpk.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0c10;
+      --surface: #111418;
+      --surface2: #181c22;
+      --border: #252a34;
+      --border2: #2e3542;
+      --text: #e2e8f0;
+      --text2: #8892a4;
+      --text3: #5a6478;
+      --accent: #3b82f6;
+      --accent-dim: rgba(59,130,246,0.15);
+      --green: #22c55e;
+      --red: #ef4444;
+      --orange: #f97316;
+      --purple: #a855f7;
+      --yellow: #eab308;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', sans-serif;
+      font-size: 13px;
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    /* TOP BAR */
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px;
+      height: 48px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .topbar-left { display: flex; align-items: center; gap: 16px; }
+    .logo { font-size: 11px; font-weight: 700; letter-spacing: 0.12em; color: var(--text2); text-transform: uppercase; border-right: 1px solid var(--border2); padding-right: 16px; }
+    .logo span { color: var(--accent); }
+    .page-title { font-size: 13px; font-weight: 600; color: var(--text); }
+    .badge { font-size: 10px; font-weight: 600; letter-spacing: 0.08em; padding: 2px 8px; border-radius: 3px; text-transform: uppercase; }
+    .badge-blue { background: var(--accent-dim); color: var(--accent); }
+    .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+
+    /* LAYOUT */
+    .container { display: grid; grid-template-columns: 260px 1fr; min-height: calc(100vh - 48px); }
+
+    /* SIDEBAR */
+    .sidebar { background: var(--surface); border-right: 1px solid var(--border); padding: 20px 16px; display: flex; flex-direction: column; gap: 20px; overflow-y: auto; }
+    .sidebar-section { display: flex; flex-direction: column; gap: 12px; }
+    .sidebar-label { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; color: var(--text3); text-transform: uppercase; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+
+    .date-nav { display: flex; align-items: center; gap: 6px; }
+    .date-nav input[type="date"] { flex: 1; background: var(--surface2); border: 1px solid var(--border2); color: var(--text); padding: 7px 10px; border-radius: 5px; font-family: 'JetBrains Mono', monospace; font-size: 12px; cursor: pointer; outline: none; color-scheme: dark; }
+    .date-nav input:focus { border-color: var(--accent); }
+    .btn-arrow { width: 28px; height: 32px; background: var(--surface2); border: 1px solid var(--border2); color: var(--text2); border-radius: 4px; cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center; transition: all .15s; flex-shrink: 0; }
+    .btn-arrow:hover { background: var(--border2); color: var(--text); }
+
+    .param-row { display: flex; flex-direction: column; gap: 4px; }
+    .param-header { display: flex; justify-content: space-between; align-items: center; }
+    .param-name { font-size: 12px; color: var(--text2); }
+    .param-value { font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 500; color: var(--text); }
+
+    input[type="range"] { width: 100%; -webkit-appearance: none; height: 3px; border-radius: 2px; background: var(--border2); outline: none; cursor: pointer; }
+    input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: var(--accent); border: 2px solid var(--bg); box-shadow: 0 0 0 1px var(--accent); }
+    input[type="range"]::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; }
+
+    .preset-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .preset-btn { background: var(--surface2); border: 1px solid var(--border2); color: var(--text2); border-radius: 5px; padding: 7px 8px; cursor: pointer; font-family: 'Inter', sans-serif; font-size: 11px; font-weight: 600; line-height: 1.4; text-align: center; transition: border-color .15s, color .15s; }
+    .preset-btn small { font-weight: 400; color: var(--text3); font-size: 10px; display: block; }
+    .preset-btn:hover { border-color: var(--accent); color: var(--text); }
+
+    .run-btn { width: 100%; padding: 10px; background: var(--accent); color: #fff; border: none; border-radius: 6px; font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 600; cursor: pointer; transition: background .15s, transform .1s; }
+    .run-btn:hover { background: #2563eb; }
+    .run-btn:active { transform: scale(0.98); }
+    .run-btn:disabled { background: var(--border2); color: var(--text3); cursor: not-allowed; }
+
+    .solver-status { font-size: 11px; color: var(--text3); text-align: center; min-height: 16px; }
+    .solver-status.ok  { color: var(--green); }
+    .solver-status.err { color: var(--red); }
+
+    /* MAIN */
+    .main { display: flex; flex-direction: column; overflow: hidden; }
+
+    /* KPI BAR */
+    .kpi-bar { display: grid; grid-template-columns: repeat(6, 1fr); border-bottom: 1px solid var(--border); }
+    .kpi-cell { padding: 14px 16px; border-right: 1px solid var(--border); }
+    .kpi-cell:last-child { border-right: none; }
+    .kpi-label { font-size: 10px; font-weight: 600; letter-spacing: 0.08em; color: var(--text3); text-transform: uppercase; }
+    .kpi-value { font-family: 'JetBrains Mono', monospace; font-size: 20px; font-weight: 700; line-height: 1.2; margin: 2px 0; }
+    .kpi-sub { font-size: 10px; color: var(--text3); }
+    .c-green  { color: var(--green); }
+    .c-blue   { color: var(--accent); }
+    .c-orange { color: var(--orange); }
+    .c-yellow { color: var(--yellow); }
+    .c-purple { color: var(--purple); }
+
+    /* CHARTS */
+    .charts-area { flex: 1; display: grid; grid-template-rows: 1fr 1fr; padding: 16px; gap: 12px; min-height: 0; }
+    .chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; display: flex; flex-direction: column; overflow: hidden; }
+    .chart-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .chart-title { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; color: var(--text2); text-transform: uppercase; }
+    .chart-body { flex: 1; min-height: 0; }
+    .legend { display: flex; gap: 12px; }
+    .legend-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text2); }
+    .legend-dot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+
+    /* LOADING */
+    .loading-overlay { position: fixed; inset: 0; background: rgba(10,12,16,0.7); display: flex; align-items: center; justify-content: center; z-index: 999; opacity: 0; pointer-events: none; transition: opacity .2s; }
+    .loading-overlay.active { opacity: 1; pointer-events: all; }
+    .spinner { width: 36px; height: 36px; border: 3px solid var(--border2); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* INIT */
+    #init-msg { position: fixed; inset: 0; background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; z-index: 200; }
+    #init-msg p { color: var(--text2); font-size: 13px; }
+  </style>
+</head>
+<body>
+
+<div id="init-msg">
+  <div class="spinner"></div>
+  <p>Loading forecast data & solver…</p>
+</div>
+
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="logo">/// <span>ENERGY</span> STORAGE</div>
+    <div class="page-title">BESS Dispatch Optimiser — GB Intra-Day</div>
+    <span class="badge badge-blue">Linear Programming</span>
+  </div>
+  <div style="display:flex;align-items:center;gap:8px">
+    <div class="status-dot"></div>
+    <span style="font-size:11px;color:var(--text3)" id="solverReady">Loading…</span>
+  </div>
+</div>
+
+<div class="container">
+  <aside class="sidebar">
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">Trading Date</div>
+      <div class="date-nav">
+        <button class="btn-arrow" id="prevDay">&#8249;</button>
+        <input type="date" id="datePicker" min="2024-01-01" max="2024-12-31" value="2024-10-14" />
+        <button class="btn-arrow" id="nextDay">&#8250;</button>
+      </div>
+      <div style="font-size:11px;color:var(--text3)">Forecasts available for 2024 only</div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">Battery Parameters</div>
+      <div class="param-row">
+        <div class="param-header"><span class="param-name">Capacity</span><span class="param-value" id="val-cap">100 MWh</span></div>
+        <input type="range" id="sl-cap" min="10" max="500" step="10" value="100" />
+      </div>
+      <div class="param-row">
+        <div class="param-header"><span class="param-name">Max Power</span><span class="param-value" id="val-pw">50 MW</span></div>
+        <input type="range" id="sl-pw" min="5" max="250" step="5" value="50" />
+      </div>
+      <div class="param-row">
+        <div class="param-header"><span class="param-name">Round-trip Efficiency</span><span class="param-value" id="val-eff">90 %</span></div>
+        <input type="range" id="sl-eff" min="60" max="99" step="1" value="90" />
+      </div>
+      <div class="param-row">
+        <div class="param-header"><span class="param-name">Initial SOC</span><span class="param-value" id="val-soc">50 %</span></div>
+        <input type="range" id="sl-soc" min="0" max="100" step="5" value="50" />
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">Presets</div>
+      <div class="preset-grid">
+        <button class="preset-btn" data-cap="100" data-pw="50"  data-eff="90" data-soc="50">Cathkin<small>100 MWh / 50 MW</small></button>
+        <button class="preset-btn" data-cap="50"  data-pw="25"  data-eff="88" data-soc="50">Small<small>50 MWh / 25 MW</small></button>
+        <button class="preset-btn" data-cap="200" data-pw="100" data-eff="92" data-soc="50">Large<small>200 MWh / 100 MW</small></button>
+        <button class="preset-btn" data-cap="400" data-pw="100" data-eff="85" data-soc="20">LDES<small>400 MWh / 100 MW</small></button>
+      </div>
+    </div>
+
+    <button class="run-btn" id="runBtn" disabled>Optimise Dispatch</button>
+    <div class="solver-status" id="solverStatus"></div>
+
+  </aside>
+
+  <main class="main">
+
+    <div class="kpi-bar">
+      <div class="kpi-cell">
+        <div class="kpi-label">Daily Revenue</div>
+        <div class="kpi-value c-green" id="kpi-revenue">—</div>
+        <div class="kpi-sub">GBP / day</div>
+      </div>
+      <div class="kpi-cell">
+        <div class="kpi-label">Avg Buy Price</div>
+        <div class="kpi-value c-blue" id="kpi-buy">—</div>
+        <div class="kpi-sub">£/MWh</div>
+      </div>
+      <div class="kpi-cell">
+        <div class="kpi-label">Avg Sell Price</div>
+        <div class="kpi-value c-orange" id="kpi-sell">—</div>
+        <div class="kpi-sub">£/MWh</div>
+      </div>
+      <div class="kpi-cell">
+        <div class="kpi-label">Price Spread</div>
+        <div class="kpi-value c-yellow" id="kpi-spread">—</div>
+        <div class="kpi-sub">£/MWh captured</div>
+      </div>
+      <div class="kpi-cell">
+        <div class="kpi-label">Energy Cycled</div>
+        <div class="kpi-value c-purple" id="kpi-cycled">—</div>
+        <div class="kpi-sub">MWh sold</div>
+      </div>
+      <div class="kpi-cell">
+        <div class="kpi-label">Full Cycles</div>
+        <div class="kpi-value" id="kpi-cycles">—</div>
+        <div class="kpi-sub">equiv. full cycles</div>
+      </div>
+    </div>
+
+    <div class="charts-area">
+      <div class="chart-card">
+        <div class="chart-header">
+          <span class="chart-title">Price Forecast & Dispatch Schedule</span>
+          <div class="legend">
+            <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div>ID Price Forecast</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div>Charge</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div>Discharge</div>
+          </div>
+        </div>
+        <div class="chart-body" id="chart-dispatch"></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-header">
+          <span class="chart-title">State of Charge Evolution</span>
+          <div class="legend">
+            <div class="legend-item"><div class="legend-dot" style="background:#a855f7"></div>SOC (MWh)</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#374151"></div>Capacity bounds</div>
+          </div>
+        </div>
+        <div class="chart-body" id="chart-soc"></div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<div class="loading-overlay" id="loadingOverlay"><div class="spinner"></div></div>
+
+<script>
+// ── GLOBALS ──
+let glpk = null;
+let forecastData = {};   // { "2024-01-01": [p0, p1, ..., p23] }
+let availableDates = [];
+
+// ── CSV path relative to this file ──
+const CSV_URL = '../dataset/forecast_ID_2024.csv';
+
+// ── PARSE CSV ──
+function parseCSV(text) {
+  const lines = text.trim().split('\n');
+  const data = {};
+  for (let i = 1; i < lines.length; i++) {
+    const [ts, price] = lines[i].split(',');
+    if (!ts || !price) continue;
+    const dateStr = ts.trim().slice(0, 10);
+    if (!data[dateStr]) data[dateStr] = [];
+    data[dateStr].push(parseFloat(price));
+  }
+  return data;
+}
+
+// ── INIT: load GLPK + CSV in parallel ──
+async function init() {
+  try {
+    const [glpkMod, csvRes] = await Promise.all([
+      GLPK(),
+      fetch(CSV_URL)
+    ]);
+    glpk = glpkMod;
+
+    if (!csvRes.ok) throw new Error(`CSV fetch failed: ${csvRes.status}`);
+    const text = await csvRes.text();
+    forecastData = parseCSV(text);
+    availableDates = Object.keys(forecastData).sort();
+
+    document.getElementById('init-msg').style.display = 'none';
+    document.getElementById('solverReady').textContent = 'GLPK Ready · ' + availableDates.length + ' days loaded';
+    document.getElementById('runBtn').disabled = false;
+
+    runOptimise();
+  } catch (e) {
+    document.getElementById('init-msg').querySelector('p').textContent = 'Error: ' + e.message;
+    console.error(e);
+  }
+}
+
+// ── LP SOLVER ──
+function solveBESS(prices, capacityMWh, maxPowerMW, efficiency, initialSocPct) {
+  const T = 24;
+  const initSoc = capacityMWh * initialSocPct / 100;
+
+  // Build variable names
+  const vars = [], subjectTo = [], bounds = [];
+
+  // Objective: max Σ price[t]*(discharge[t] - charge[t])
+  const objVars = [];
+  for (let t = 0; t < T; t++) {
+    objVars.push({ name: `c${t}`, coef: -prices[t] });
+    objVars.push({ name: `d${t}`, coef:  prices[t] });
+  }
+
+  // SOC dynamics: soc[t] = soc[t-1] + charge[t]*eff - discharge[t]
+  // Rewritten: soc[t] - soc[t-1] - charge[t]*eff + discharge[t] = 0
+  // Hour 0: soc[0] - charge[0]*eff + discharge[0] = initSoc
+  subjectTo.push({
+    name: 'soc_0',
+    vars: [
+      { name: 's0', coef: 1 },
+      { name: 'c0', coef: -efficiency },
+      { name: 'd0', coef: 1 },
+    ],
+    bnds: { type: glpk.GLP_FX, lb: initSoc, ub: initSoc }
+  });
+
+  for (let t = 1; t < T; t++) {
+    subjectTo.push({
+      name: `soc_${t}`,
+      vars: [
+        { name: `s${t}`,   coef:  1 },
+        { name: `s${t-1}`, coef: -1 },
+        { name: `c${t}`,   coef: -efficiency },
+        { name: `d${t}`,   coef:  1 },
+      ],
+      bnds: { type: glpk.GLP_FX, lb: 0, ub: 0 }
+    });
+  }
+
+  // Final SOC = initial SOC
+  subjectTo.push({
+    name: 'final_soc',
+    vars: [{ name: `s${T-1}`, coef: 1 }],
+    bnds: { type: glpk.GLP_FX, lb: initSoc, ub: initSoc }
+  });
+
+  // Bounds
+  for (let t = 0; t < T; t++) {
+    bounds.push({ name: `c${t}`, type: glpk.GLP_DB, lb: 0, ub: maxPowerMW });
+    bounds.push({ name: `d${t}`, type: glpk.GLP_DB, lb: 0, ub: maxPowerMW });
+    bounds.push({ name: `s${t}`, type: glpk.GLP_DB, lb: 0, ub: capacityMWh });
+  }
+
+  const lp = {
+    name: 'BESS',
+    objective: { direction: glpk.GLP_MAX, name: 'revenue', vars: objVars },
+    subjectTo,
+    bounds,
+  };
+
+  const result = glpk.solve(lp, { msglev: glpk.GLP_MSG_OFF });
+
+  if (result.result.status !== glpk.GLP_OPT) {
+    throw new Error('LP not optimal, status: ' + result.result.status);
+  }
+
+  const vars_ = result.result.vars;
+  const charge    = Array.from({length: T}, (_, t) => Math.max(0, vars_[`c${t}`] || 0));
+  const discharge = Array.from({length: T}, (_, t) => Math.max(0, vars_[`d${t}`] || 0));
+  const soc       = Array.from({length: T}, (_, t) => Math.max(0, vars_[`s${t}`] || 0));
+
+  const revenue      = prices.reduce((s, p, t) => s + p * (discharge[t] - charge[t]), 0);
+  const energySold   = discharge.reduce((a, v) => a + v, 0);
+  const energyBought = charge.reduce((a, v) => a + v, 0);
+  const avgBuy  = energyBought > 0 ? prices.reduce((s, p, t) => s + p * charge[t], 0) / energyBought : 0;
+  const avgSell = energySold   > 0 ? prices.reduce((s, p, t) => s + p * discharge[t], 0) / energySold : 0;
+
+  return {
+    charge, discharge, soc,
+    kpis: {
+      revenue:       Math.round(revenue * 100) / 100,
+      avgBuy:        Math.round(avgBuy * 10) / 10,
+      avgSell:       Math.round(avgSell * 10) / 10,
+      spread:        Math.round((avgSell - avgBuy) * 10) / 10,
+      energySold:    Math.round(energySold * 10) / 10,
+      cycles:        Math.round(energySold / capacityMWh * 100) / 100,
+    }
+  };
+}
+
+// ── CHARTS ──
+const PLOTLY_CFG = { displayModeBar: false, responsive: true };
+const BG = '#111418', GRID = '#252a34', FONT = '#8892a4';
+const AXIS = { gridcolor: GRID, zerolinecolor: GRID, tickfont: { family:'JetBrains Mono', size:10, color:FONT } };
+const LAYOUT = { plot_bgcolor:BG, paper_bgcolor:BG, font:{ family:'Inter', color:FONT }, hovermode:'x unified', hoverlabel:{ bgcolor:'#181c22', bordercolor:'#252a34', font:{ family:'JetBrains Mono', size:12 } } };
+
+function renderCharts(ts, prices, charge, discharge, soc, capacityMWh) {
+  const m = { t:10, b:40, l:55, r:16 };
+  const maxBar = Math.max(...charge, ...discharge, 1) * 1.3;
+
+  Plotly.react('chart-dispatch', [
+    { x:ts, y:prices, type:'scatter', mode:'lines', name:'ID Forecast (£/MWh)', line:{ color:'#3b82f6', width:2 }, yaxis:'y' },
+    { x:ts, y:charge, type:'bar', name:'Charge (MWh)', marker:{ color:'rgba(34,197,94,0.75)' }, yaxis:'y2' },
+    { x:ts, y:discharge.map(v => -v), type:'bar', name:'Discharge (MWh)', marker:{ color:'rgba(239,68,68,0.75)' }, yaxis:'y2' },
+  ], {
+    ...LAYOUT, barmode:'relative', margin: m,
+    xaxis: { ...AXIS, tickmode:'array', tickvals: ts.filter((_,i) => i%4===0) },
+    yaxis:  { ...AXIS, title:'£/MWh', titlefont:{ size:11 } },
+    yaxis2: { ...AXIS, title:'MWh', titlefont:{ size:11 }, overlaying:'y', side:'right', range:[-maxBar, maxBar] },
+    legend: { font:{ family:'Inter', size:11, color:FONT }, bgcolor:'rgba(0,0,0,0)', orientation:'h', x:0, y:-0.18 },
+  }, PLOTLY_CFG);
+
+  Plotly.react('chart-soc', [
+    { x:ts, y:soc, type:'scatter', mode:'lines', name:'SOC (MWh)', fill:'tozeroy', fillcolor:'rgba(168,85,247,0.12)', line:{ color:'#a855f7', width:2 } },
+    { x:[ts[0], ts[23]], y:[capacityMWh, capacityMWh], type:'scatter', mode:'lines', name:'Max', line:{ color:'#374151', width:1, dash:'dot' }, hoverinfo:'skip' },
+    { x:[ts[0], ts[23]], y:[0, 0], type:'scatter', mode:'lines', name:'Min', line:{ color:'#374151', width:1, dash:'dot' }, hoverinfo:'skip' },
+  ], {
+    ...LAYOUT, margin: m,
+    xaxis: { ...AXIS, tickmode:'array', tickvals: ts.filter((_,i) => i%4===0) },
+    yaxis: { ...AXIS, title:'MWh', titlefont:{ size:11 }, range:[-5, capacityMWh*1.1] },
+    legend: { font:{ family:'Inter', size:11, color:FONT }, bgcolor:'rgba(0,0,0,0)', orientation:'h', x:0, y:-0.18 },
+  }, PLOTLY_CFG);
+}
+
+function updateKPIs(k) {
+  const fmt = (v, d=0) => v.toLocaleString('en-GB', { minimumFractionDigits:d, maximumFractionDigits:d });
+  document.getElementById('kpi-revenue').textContent = '£' + fmt(k.revenue);
+  document.getElementById('kpi-buy').textContent     = fmt(k.avgBuy, 1);
+  document.getElementById('kpi-sell').textContent    = fmt(k.avgSell, 1);
+  document.getElementById('kpi-spread').textContent  = fmt(k.spread, 1);
+  document.getElementById('kpi-cycled').textContent  = fmt(k.energySold, 1);
+  document.getElementById('kpi-cycles').textContent  = k.cycles.toFixed(2);
+}
+
+// ── MAIN RUN ──
+async function runOptimise() {
+  if (!glpk || !Object.keys(forecastData).length) return;
+
+  const date    = document.getElementById('datePicker').value;
+  const capMWh  = +document.getElementById('sl-cap').value;
+  const maxPW   = +document.getElementById('sl-pw').value;
+  const eff     = +document.getElementById('sl-eff').value / 100;
+  const socPct  = +document.getElementById('sl-soc').value;
+
+  const prices = forecastData[date];
+  if (!prices || prices.length < 24) {
+    document.getElementById('solverStatus').className = 'solver-status err';
+    document.getElementById('solverStatus').textContent = 'No forecast data for ' + date;
+    return;
+  }
+
+  const btn = document.getElementById('runBtn');
+  const status = document.getElementById('solverStatus');
+  const overlay = document.getElementById('loadingOverlay');
+  btn.disabled = true;
+  overlay.classList.add('active');
+  status.className = 'solver-status';
+  status.textContent = 'Solving LP…';
+
+  // Defer to next tick so UI updates
+  await new Promise(r => setTimeout(r, 0));
+
+  try {
+    const res = solveBESS(prices.slice(0, 24), capMWh, maxPW, eff, socPct);
+    const ts = Array.from({ length: 24 }, (_, h) => String(h).padStart(2,'0') + ':00');
+    renderCharts(ts, prices, res.charge, res.discharge, res.soc, capMWh);
+    updateKPIs(res.kpis);
+    status.className = 'solver-status ok';
+    status.textContent = 'Optimal solution found';
+  } catch(e) {
+    status.className = 'solver-status err';
+    status.textContent = 'Solver error: ' + e.message;
+    console.error(e);
+  } finally {
+    btn.disabled = false;
+    overlay.classList.remove('active');
+  }
+}
+
+// ── SLIDERS ──
+const sliderDefs = [
+  { id:'sl-cap',  valId:'val-cap',  unit:' MWh' },
+  { id:'sl-pw',   valId:'val-pw',   unit:' MW'  },
+  { id:'sl-eff',  valId:'val-eff',  unit:' %'   },
+  { id:'sl-soc',  valId:'val-soc',  unit:' %'   },
+];
+sliderDefs.forEach(({ id, valId, unit }) => {
+  document.getElementById(id).addEventListener('input', e => {
+    document.getElementById(valId).textContent = e.target.value + unit;
+  });
+});
+
+// ── PRESETS ──
+document.querySelectorAll('.preset-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.getElementById('sl-cap').value  = btn.dataset.cap;  document.getElementById('val-cap').textContent  = btn.dataset.cap  + ' MWh';
+    document.getElementById('sl-pw').value   = btn.dataset.pw;   document.getElementById('val-pw').textContent   = btn.dataset.pw   + ' MW';
+    document.getElementById('sl-eff').value  = btn.dataset.eff;  document.getElementById('val-eff').textContent  = btn.dataset.eff  + ' %';
+    document.getElementById('sl-soc').value  = btn.dataset.soc;  document.getElementById('val-soc').textContent  = btn.dataset.soc  + ' %';
+  });
+});
+
+// ── DATE NAV ──
+const picker = document.getElementById('datePicker');
+document.getElementById('prevDay').addEventListener('click', () => {
+  const d = new Date(picker.value + 'T00:00:00'); d.setDate(d.getDate()-1);
+  const s = d.toISOString().slice(0,10); if (forecastData[s]) picker.value = s;
+});
+document.getElementById('nextDay').addEventListener('click', () => {
+  const d = new Date(picker.value + 'T00:00:00'); d.setDate(d.getDate()+1);
+  const s = d.toISOString().slice(0,10); if (forecastData[s]) picker.value = s;
+});
+
+document.getElementById('runBtn').addEventListener('click', runOptimise);
+
+// ── START ──
+init();
+</script>
+</body>
+</html>

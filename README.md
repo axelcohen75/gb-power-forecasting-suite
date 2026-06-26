@@ -1,19 +1,16 @@
-# GB Power: Intra-Day Price Forecasting & Battery Dispatch
+# GB Power Forecasting Suite
 
-An end-to-end project on the Great Britain power market, in two parts:
+> Forecasting GB intra-day electricity prices, with practical use cases built on top — starting with battery dispatch optimisation and an interactive dashboard.
 
-1. **Forecasting** the Intra-Day (ID) electricity price from public market data.
-2. **Optimising** a battery's charge/discharge schedule using those forecasts to maximise revenue.
-
-The two parts form a realistic pipeline — the forecast is not the end goal in itself, it's the **input to a decision**:
+The **core** of this project is a model that forecasts the Great Britain intra-day electricity price. On top of that forecast, the repo hosts **use cases** that turn the prediction into a concrete decision — the first being a **battery dispatch optimiser** with an interactive dashboard. The structure is designed to grow with new use cases over time.
 
 ```
-XGBoost forecast  →  forecasted ID prices  →  PuLP optimiser  →  battery dispatch strategy
+forecasting model  →  forecasted ID prices  →  use case (e.g. battery dispatch optimiser)
 ```
 
 ---
 
-# Part 1 — Intra-Day Price Forecasting
+# Core — Intra-Day Price Forecasting
 
 ## Objective
 
@@ -54,36 +51,41 @@ Hourly data spanning **2020–2024** (GB grid, 17 transmission zones).
 | XGBoost v1 (untuned) | 11.09 | 17.12 | 0.697 |
 | **XGBoost v2 (regularised)** | **10.33** | **15.90** | **0.739** |
 
-The regularised **XGBoost v2** is the best model. Feature importance confirms the economic intuition: the model **anchors on the day-ahead price** and **corrects it with the supply/demand surprise**. The model captures the direction of moves well but smooths the extreme spikes, which are often driven by events outside the dataset (plant outages, balancing actions).
+The regularised **XGBoost v2** is the best model. Feature importance confirms the economic intuition: the model **anchors on the day-ahead price** and **corrects it with the supply/demand surprise**. It captures the direction of moves well but smooths the extreme spikes, which are often driven by events outside the dataset (plant outages, balancing actions).
+
+> 📓 Notebook: `Forecast-GB-Power-ID.ipynb` — it exports the 2024 forecasts to `dataset/forecast_ID_2024.csv`, used by the use cases below.
 
 ---
 
-# Part 2 — Battery (BESS) Dispatch Optimisation
+# Use case — Battery (BESS) Dispatch Optimisation
 
-## Objective
+## Idea
 
 A **Battery Energy Storage System (BESS)** makes money through **time arbitrage**: charge (buy) when electricity is cheap, discharge (sell) when it's expensive. Using the forecasted ID prices as input, we find the optimal hourly charge/discharge schedule that **maximises daily revenue** under the battery's physical constraints.
 
-Specs are inspired by **Engie's Cathkin BESS** (East Kilbride, Scotland), a 2-hour lithium iron phosphate site; the optimiser is spec-agnostic and works for any capacity/power.
+Specs are inspired by **Engie's Cathkin BESS** (East Kilbride, Scotland); the optimiser is spec-agnostic and works for any capacity/power.
 
 ## Method
 
-The problem is framed as a **linear program** and solved with **PuLP**:
+The problem is framed as a **linear program** and solved with **PuLP** (CBC solver):
 
 - **Decision variables** — `charge`, `discharge`, and `soc` (state of charge) for each hour
 - **Objective** — maximise `Σ price[t] × (discharge[t] − charge[t])`
-- **Constraints**:
-  - SOC evolution with round-trip efficiency applied on charge
-  - Capacity and power limits
-  - Battery ends the day at its starting SOC (fair, repeatable cycle)
+- **Constraints** — SOC evolution with round-trip efficiency, capacity and power limits, and a return to the starting SOC at the end of the day
 
 The optimised strategy is benchmarked against a **naive rule** (charge during the cheapest hours, discharge during the most expensive) to quantify the value the optimisation adds.
 
-## Output
+> 📓 Notebook: `BESS-Dispatch-Optimisation.ipynb`
 
-- Total daily revenue (£) and number of arbitrage cycles
-- Hour-by-hour schedule (price vs charge/discharge vs SOC)
-- On a volatile example day, the optimiser runs two arbitrage cycles — buying at the overnight low and selling into the evening peak — while respecting all physical limits.
+## Interactive dashboard
+
+An interactive **Dash** app lets you explore the optimiser live: pick any 2024 day, tune the battery parameters (capacity, power, efficiency, initial SOC) or use presets, and watch the dispatch schedule, state of charge, and KPIs (revenue, average buy/sell price, cycles) update in real time.
+
+```bash
+cd bess-dashboard
+python app.py
+# then open http://localhost:7860
+```
 
 ---
 
@@ -91,22 +93,24 @@ The optimised strategy is benchmarked against a **naive rule** (charge during th
 
 ```
 .
-├── Forecast-GB-Power-ID.ipynb         # Part 1 — forecasting notebook
-├── BESS-Dispatch-Optimisation.ipynb   # Part 2 — battery dispatch notebook
-├── BESS Dispatch Dashboard/           # Interactive dashboard
-├── dataset/                           # Input CSV files + forecast_ID_2024.csv (output of Part 1, input of Part 2)
+├── Forecast-GB-Power-ID.ipynb         # Core — forecasting notebook
+├── BESS-Dispatch-Optimisation.ipynb   # Use case — battery dispatch notebook
+├── bess-dashboard/                    # Interactive dashboard (Dash)
+│   ├── app.py
+│   └── assets/style.css
+├── dataset/                           # Input CSV files + forecast_ID_2024.csv
 └── README.md
 ```
 
 ### Run
 
 ```bash
-pip install pandas numpy matplotlib seaborn xgboost scikit-learn pulp
-jupyter notebook
+pip install pandas numpy matplotlib seaborn xgboost scikit-learn pulp dash dash-bootstrap-components plotly
 ```
 
-Run `Forecast-GB-Power-ID.ipynb` first (it produces `forecast_ID_2024.csv`), then `BESS-Dispatch-Optimisation.ipynb`.
+1. Run `Forecast-GB-Power-ID.ipynb` (produces `dataset/forecast_ID_2024.csv`)
+2. Run `BESS-Dispatch-Optimisation.ipynb`, or launch the dashboard (`cd bess-dashboard && python app.py`)
 
 ---
 
-> *AI was used to generate the plots and polish the markdown. The analysis, modelling and interpretation are my own.*
+> *AI was used to generate the plots, build the dashboard, and polish the markdown. The analysis, modelling and interpretation are my own.*
